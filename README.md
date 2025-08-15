@@ -1,3 +1,6 @@
+# Hydraulic Efficiency Optimizer
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.16878253.svg)](https://doi.org/10.5281/zenodo.16878253)
+
 # hydraulics-prediction-software
 Predictive optimization for industrial hydraulic systems — paper + code for efficiency gain modeling and setpoint recommendations
 # Hydraulic Efficiency Optimizer
