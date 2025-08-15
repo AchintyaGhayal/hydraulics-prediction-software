@@ -1,0 +1,105 @@
+# hydraulics.py
+# No arguments needed — just run: python hydraulics.py
+
+import json
+import joblib
+import warnings
+import numpy as np
+import pandas as pd
+from pathlib import Path
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.experimental import enable_hist_gradient_boosting  # noqa
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.model_selection import KFold, cross_val_score
+from sklearn.inspection import permutation_importance
+from sklearn.metrics import mean_absolute_error, r2_score
+
+warnings.filterwarnings("ignore")
+
+# CSV filename 
+CSV_FILE = "hydraulics_ops_sustainability_dataset.csv"
+SEED = 42
+ARTIFACTS = Path("artifacts")
+ARTIFACTS.mkdir(exist_ok=True)
+
+def load_data():
+    df = pd.read_csv(CSV_FILE)
+    cat_cols = ['region','client_type','product_line','material','control_type','sensor_pack','oil_type']
+    for c in cat_cols:
+        if c in df.columns:
+            df[c] = df[c].astype("category")
+    req_cols = [
+        'filtration_rating_micron','oil_change_interval_hours',
+        'test_pressure_bar','test_duration_min','leak_rate_ml_min',
+        'region','client_type','product_line','material','control_type','sensor_pack','oil_type',
+        'efficiency_pct','energy_used_kwh','co2_kg','heat_loss_kwh'
+    ]
+    missing = [c for c in req_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing columns in CSV: {missing}")
+    return df
+
+def cv_report(model, X, y, name):
+    cv = KFold(n_splits=5, shuffle=True, random_state=SEED)
+    r2 = cross_val_score(model, X, y, cv=cv, scoring="r2")
+    mae = -cross_val_score(model, X, y, cv=cv, scoring="neg_mean_absolute_error")
+    print(f"[{name}] R²: {r2.mean():.3f} ± {r2.std():.3f} | MAE: {mae.mean():.3f}")
+
+def train_efficiency(df):
+    num = ['filtration_rating_micron','oil_change_interval_hours','test_pressure_bar','test_duration_min','leak_rate_ml_min']
+    cat = ['region','client_type','product_line','material','control_type','sensor_pack','oil_type']
+    X, y = df[num + cat], df['efficiency_pct']
+
+    pre = ColumnTransformer([
+        ("num", StandardScaler(with_mean=False), num),
+        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=True), cat),
+    ])
+
+    model = Pipeline([
+        ("prep", pre),
+        ("hgb", HistGradientBoostingRegressor(random_state=SEED, learning_rate=0.08,
+                                              max_depth=6, max_iter=400, l2_regularization=0.02))
+    ])
+
+    cv_report(model, X, y, "Efficiency")
+    model.fit(X, y)
+
+    joblib.dump(model, ARTIFACTS / "model_efficiency.joblib")
+    with open(ARTIFACTS / "feature_names_eff.json", "w") as f:
+        json.dump((num, cat), f)
+
+def train_co2(df):
+    num = ['energy_used_kwh','filtration_rating_micron','test_pressure_bar','test_duration_min','efficiency_pct']
+    cat = ['region','client_type','product_line','material','control_type','sensor_pack','oil_type']
+    X, y = df[num + cat], df['co2_kg']
+
+    pre = ColumnTransformer([
+        ("num", StandardScaler(with_mean=False), num),
+        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=True), cat),
+    ])
+
+    model = Pipeline([
+        ("prep", pre),
+        ("hgb", HistGradientBoostingRegressor(random_state=SEED, learning_rate=0.07,
+                                              max_depth=6, max_iter=450, l2_regularization=0.04))
+    ])
+
+    cv_report(model, X, y, "CO2")
+    model.fit(X, y)
+
+    joblib.dump(model, ARTIFACTS / "model_co2.joblib")
+    with open(ARTIFACTS / "feature_names_co2.json", "w") as f:
+        json.dump((num, cat), f)
+
+def main():
+    print(f"Loading data from {CSV_FILE}...")
+    df = load_data()
+    print(f"Loaded {len(df):,} rows.")
+    train_efficiency(df)
+    train_co2(df)
+    print("✅ Models saved to ./artifacts")
+
+if __name__ == "__main__":
+    main()
